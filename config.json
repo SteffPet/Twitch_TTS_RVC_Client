@@ -1,0 +1,12 @@
+{
+  "TTS": {
+    "model": "de_DE-thorsten-high.onnx"
+  },
+  "RVC": {
+    "temp_dir": "C:\\Users\\User\\AppData\\Local\\Temp"
+  },
+  "twitchio": {
+    "token": "token",
+	"channel": "name"
+  }
+}
