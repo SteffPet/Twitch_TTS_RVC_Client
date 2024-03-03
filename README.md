@@ -14,3 +14,9 @@ Rquirements:
 Add RVC model:
 - Add .pth files in folder RVC\assets\weights
 - Add index file in folder RVC\logs
+
+How to use:
+- Start go-web.bat in RVC folder
+- Start Twitch_TTS_RVC.py
+- Choose RVC model in app
+- Click Start
