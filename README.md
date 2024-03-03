@@ -1,7 +1,8 @@
 Twitch TTS with RVC Model
 
-Rquirements:
+RVC files not included!
 
+Rquirements:
 - Python Installation: https://www.python.org/downloads/windows/
 - Install needed python packages with pip
 - Piper TTS: https://github.com/rhasspy/piper/releases -> unzip in the root folder
@@ -9,3 +10,7 @@ Rquirements:
 - RVC: https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI -> Download rep as .zip -> unzip in RCV folder
 - Twitch Token: https://twitchtokengenerator.com/ -> Bot Chat Token -> Access Token -> add in config.json file -> token
 - Edit config.json -> temp_dir
+
+Add RVC model:
+- Add .pth files in folder RVC\assets\weights
+- Add index file in folder RVC\logs
