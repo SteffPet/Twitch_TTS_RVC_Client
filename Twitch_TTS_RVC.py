@@ -15,11 +15,13 @@ from datetime import datetime
 from threading import Thread
 from PIL import Image, ImageTk
 
+#--Globale Variablen
 last_generated_file = None
 last_rvc_file = None
 show_model_label = False
 show_user_label = False
 show_img_label = False
+model_change_bool = False
 m_count = 0
 
 #--------TTS Funktionen--------------------
@@ -188,8 +190,8 @@ def init_TTS():
     bot_thread = threading.Thread(target=bot_run)
     bot_thread.start()
     
-    model_thread = threading.Thread(target=model_change)
-    model_thread.start()
+    #model_thread = threading.Thread(target=model_change)
+    #model_thread.start()
     
     test_prompt = "Das Programm rennt jetzt, Hänno."
     
@@ -202,15 +204,23 @@ def init_TTS():
 
 #----------Model wechsel dich-------------
 def model_change():
-    while True:        
-        time.sleep(60)
-        RVC_config("Olaf_Scholz.pth")
-        time.sleep(60)        
-        RVC_config("Stronghold_3.pth")
-        time.sleep(120)        
-        RVC_config("Maxim.pth")
-        time.sleep(120)
-        RVC_config("peter_lustig.pth")
+    while model_change_bool:
+        if model_change_bool:
+            time.sleep(20)
+        if model_change_bool:
+            RVC_config("Olaf_Scholz.pth")
+        if model_change_bool:
+            time.sleep(20)
+        if model_change_bool:
+            RVC_config("Stronghold_3.pth")
+        if model_change_bool:
+            time.sleep(20)        
+        if model_change_bool:
+            RVC_config("Maxim.pth")
+        if model_change_bool:
+            time.sleep(20)
+        if model_change_bool:
+            RVC_config("peter_lustig.pth")
 
 #----------Twitch Bot Steuerung------------
     
@@ -235,7 +245,7 @@ def init_window(window):
   
     # Auswahlfeld für RVC-Modelle
     model_label = tk.Label(window, text="RVC Model auswählen:")
-    model_label.place(relx=0.2, rely=0.4, anchor="center")
+    model_label.place(relx=0.15, rely=0.4, anchor="center")
     
     # Liste der .pth-Dateien im Unterverzeichnis RVC/assets/weights abrufen
     rvc_models = [f for f in os.listdir(os.path.join("RVC", "assets", "weights")) if f.endswith(".pth")]
@@ -246,11 +256,16 @@ def init_window(window):
 
     # Dropdown-Menü für die Auswahl des RVC-Modells
     model_dropdown = tk.OptionMenu(window, selected_model, *rvc_models)
-    model_dropdown.place(relx=0.5, rely=0.4, anchor="center")
+    model_dropdown.place(relx=0.4, rely=0.4, anchor="center")
 
     # Button "Model laden"
     load_model_button = tk.Button(window, text="Model laden", command=lambda: load_model_action(selected_model.get()))
-    load_model_button.place(relx=0.8, rely=0.4, anchor="center")
+    load_model_button.place(relx=0.6, rely=0.4, anchor="center")
+ 
+    # Model-Chance Button
+    global model_change_button
+    model_change_button = tk.Button(window, text="Model Rotation starten", command=lambda: model_change_action())
+    model_change_button.place(relx=0.8, rely=0.4, anchor="center")
  
     # Start-Button
     global start_button
@@ -259,6 +274,20 @@ def init_window(window):
 
 def load_model_action(selected_model):
     RVC_config(selected_model)
+
+def model_change_action():
+    global model_change_bool
+    global model_change_button
+    if not model_change_bool:
+        model_change_bool = True
+        print('Model Rotation gestartet!')
+        model_change_button.config(text="Model Rotation stoppen")
+        model_thread = threading.Thread(target=model_change)
+        model_thread.start()
+    else:
+        model_change_bool = False
+        print('Model Rotation gestoppt!')
+        model_change_button.config(text="Model Rotation starten")
 
 def init_model_label(model_name):
     global root
@@ -275,11 +304,7 @@ def bot_live(window):
     text_label = tk.Label(window, text="Programm läuft. Zum Beenden Shell schließen. ", font=("Arial", 10), fg="red")
     text_label.place(relx=0.5, rely=0.7, anchor="center")  # Place text label in the center of the window
     global start_button
-    start_button.destroy()
-    
-    #global stop_button
-    #stop_button = tk.Button(window, text="Stop", command=lambda: stop_action(window))
-    #stop_button.place(relx=0.5, rely=0.8, anchor="center")  # Place stop button below start button
+    start_button.destroy()    
 
 def start_action(window):
     start_button.config(state="disabled", text="Warte auf Twitch...")  # Disable start button once clicked
