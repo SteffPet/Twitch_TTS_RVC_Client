@@ -1,5 +1,6 @@
 import json
 import tkinter as tk
+import pandas as pd
 import subprocess
 import os
 import pygame
@@ -8,6 +9,7 @@ import shutil
 import time
 import asyncio
 import threading
+import queue
 import time
 
 from twitchio.ext import commands
@@ -15,7 +17,7 @@ from datetime import datetime
 from threading import Thread
 from PIL import Image, ImageTk
 
-#--Globale Variablen
+#------Globale Variablen-----------------
 last_generated_file = None
 last_rvc_file = None
 show_model_label = False
@@ -23,8 +25,10 @@ show_user_label = False
 show_img_label = False
 model_change_bool = False
 m_count = 0
+message_queue = queue.Queue()
+queue_df = pd.DataFrame(columns=['Zeit', 'Count', 'Autor', 'Nachricht', 'Reward'])
 
-#--------TTS Funktionen--------------------
+#--------Config-Datei laden--------------------
 def load_config(file_path):
     try:
         with open(file_path) as f:
@@ -36,6 +40,7 @@ def load_config(file_path):
         print(f"Error: Malformed JSON in config file '{file_path}'.")
         return {}
 
+#---------Umlaute anpassen------------
 def replace_umlaute(input_string):
     # Ersetzen der Umlaute
     input_string = input_string.replace('ä', 'ae')
@@ -46,6 +51,7 @@ def replace_umlaute(input_string):
     input_string = input_string.replace('Ü', 'Ue')
     return input_string   
 
+#---------Piper TTS----------------------
 def piper_generate(prompt):
     #TTS mit Piper    
     global last_generated_file
@@ -71,6 +77,7 @@ def piper_generate(prompt):
     
     print("TTS abgeschlossen!")
 
+#---------RVC Model laden--------------
 def RVC_config(rvc_model):
     #RVC model festlegen
     #Input ist der .pth Dateiname
@@ -92,6 +99,7 @@ def RVC_config(rvc_model):
     get_image(rvc_model)
     print(f"RVC Model '{rvc_model}' wurde geladen!")
 
+#-------RVC Konvertierung---------------
 def RVC_convert():
     #Audio convert mit RVC
     root_dir = os.path.abspath(os.path.dirname(__file__))
@@ -116,6 +124,7 @@ def RVC_convert():
     
     get_RVC_file()
 
+#----------RVC File aus temporären Daten kopieren------------
 def get_RVC_file():
     global last_rvc_file
     
@@ -149,6 +158,7 @@ def get_RVC_file():
     else:
         print("Keine .wav-Dateien im temporären Verzeichnis gefunden.")
 
+#--------Länge der RVC Audiodatei ermitteln---------------
 def get_audio_length(file_path):
     #Audiodateilänge ermitteln    
     if file_path:
@@ -167,6 +177,7 @@ def get_audio_length(file_path):
 
         return audio_length 
 
+#---------RVC abspielen-------------
 def play_last_rvc(file_path):
     #Audiodatei abspielen
     if file_path:
@@ -183,15 +194,18 @@ def play_last_rvc(file_path):
         # Spiele die Audiodatei ab
         sound.play()  
 
+#------------TTS/RVC starten mit Test Prompt------------
 def init_TTS(): 
     
     global last_rvc_file  
     
     bot_thread = threading.Thread(target=bot_run)
+    bot_thread.daemon = True
     bot_thread.start()
     
-    #model_thread = threading.Thread(target=model_change)
-    #model_thread.start()
+    queue_thread = threading.Thread(target=process_messages)
+    queue_thread.daemon = True
+    queue_thread.start()
     
     test_prompt = "Das Programm rennt jetzt, Hänno."
     
@@ -223,23 +237,95 @@ def model_change():
             RVC_config("peter_lustig.pth")
 
 #----------Twitch Bot Steuerung------------
-    
 def bot_run():
     
     asyncio.set_event_loop(asyncio.new_event_loop())
     print("Verbindung zu Twitch herstellen")
     bot = Bot()
     bot.run()
-    
-#---------Window------------------------
-def init_window(window):
-    #window.title("Twitch TTS RVC")
-    #window.geometry("400x200")  # Set initial window size to 400x200 pixels
 
-    #global start_button
-    #start_button = tk.Button(window, text="Start", command=lambda: start_action(window))
-    #start_button.place(relx=0.5, rely=0.5, anchor="center")
+##---------Queue Funktionen------------------
+# Funktion, um Nachrichten und Absender in die Queue zu schreiben
+def enqueue_message(m_time, m_count, m_author, message, m_reward):
+    global message_queue
+    message_queue.put((m_time, m_count, m_author, message, m_reward))
+    add_queue_content(m_time, m_count, m_author, message, m_reward)
+
+# Funktion um Daten aus der Queue zu holen    
+def process_messages():
+    while True:
+        if not message_queue.empty():  # Überprüfe, ob die Queue leer ist
+            m_time, m_count, m_author, message, m_reward = message_queue.get()  # Holt Nachricht und Absender aus der Queue
+            print(f'[{m_time}] [{m_count}] {m_author}: {message} | Reward Title: {m_reward}') # Gibt Infos in Konsole aus
+            
+            #PiperTTS durchführen
+            piper_generate(message)
+            #RVC Convert durchführen
+            RVC_convert()
+            
+            #RVC Audiolänge ermitteln und ausgeben
+            global rvc_length
+            rvc_length = get_audio_length(last_rvc_file)
+            print(f'Audio Length: {rvc_length}')
+            
+            #Auf der Nutzeroberfläche user_label zeigen
+            global show_user_label
+            show_user_label = True
+            
+            #RVC Audio ausgeben
+            play_last_rvc(last_rvc_file)
+            time.sleep(rvc_length)
+            # user_label ausblenden
+            show_user_label = False
+            del_queue_content(m_count)
+            
+            message_queue.task_done()  # Markiert die Nachricht als erledigt
+        else:
+            time.sleep(1)  # Kurze Pause, um die CPU nicht zu überlasten
+
+#------WIP------Nachrichten in der Queue anzeigen------------
+def show_queue_contents():
     
+    queue_window = tk.Toplevel(root)
+    queue_window.title("Nachrichten in Queue")
+    
+    # Liste zur Anzeige der Nachrichten und Absender
+    global queue_listbox
+    queue_listbox = tk.Listbox(queue_window, width=150, height=10)
+    queue_listbox.pack(padx=10, pady=10)
+    
+    queue_display_thread = threading.Thread(target=update_queue_contents)
+    queue_display_thread.daemon = True
+    queue_display_thread.start()
+    
+    root.mainloop()
+
+def add_queue_content(m_time, m_count, m_author, message, m_reward):
+    global queue_df
+    queue_df = pd.concat([queue_df, pd.DataFrame({'Zeit': [m_time], 'Count': [m_count], 'Autor': [m_author], 'Nachricht': [message], 'Reward': [m_reward]})], ignore_index=True)
+
+def del_queue_content(m_count):
+    global queue_df
+    queue_df = queue_df.drop(queue_df[queue_df['Count'] == m_count].index)
+
+# Listeninhalt laden
+def update_queue_contents():
+    global queue_listbox
+    while True:
+        # Lösche vorherige Einträge in der ListBox
+        queue_listbox.delete(0, tk.END)    
+        # Fülle DataFrame mit den aktuellen Nachrichten aus der Queue
+        while not queue_df.empty:
+            queue_listbox.delete(0, tk.END)        
+        # Füge die Nachrichten aus dem DataFrame der ListBox hinzu
+            for index, row in queue_df.iterrows():
+                queue_listbox.insert(tk.END, f'[{row["Zeit"]}] [{row["Count"]}] {row["Autor"]}: {row["Nachricht"]} | Reward Title: {row["Reward"]}')        
+            time.sleep(1)  # Kurze Pause
+        time.sleep(1)
+    
+#---------Nutzeroberfläche--------------------------------------------
+def init_window(window):
+
     window.title("Twitch TTS RVC")
     window.geometry("600x300")  # Set initial window size to 400x200 pixels
   
@@ -270,7 +356,8 @@ def init_window(window):
     # Start-Button
     global start_button
     start_button = tk.Button(window, text="Twitch Bot starten", command=lambda: start_action(window))
-    start_button.place(relx=0.5, rely=0.8, anchor="center")
+    start_button.place(relx=0.5, rely=0.8, anchor="center")    
+
 
 def load_model_action(selected_model):
     RVC_config(selected_model)
@@ -309,6 +396,11 @@ def bot_live(window):
 def start_action(window):
     start_button.config(state="disabled", text="Warte auf Twitch...")  # Disable start button once clicked
     init_TTS()
+    
+    #Queue-Button init
+    global queue_button
+    queue_button = tk.Button(window, text="Queue anzeigen", command=lambda: show_queue_contents())
+    queue_button.place(relx=0.5, rely=0.9, anchor="center")
 
 def init_user_label():
     global root
@@ -413,41 +505,26 @@ class Bot(commands.Bot):
             # Zum Beispiel könnten Sie die erhaltenen Informationen verwenden, um auf die Channel-Points-Aktion zu reagieren
             print(f"PointMessage received - User: {user_name}, Reward: {reward_title}")
 
+#----------Event Empfang einer Nachricht---------------------------
     async def event_message(self, message):
         global last_rvc_file        
-        # Print the chat message including the username and timestamp
+        
+        #Alle Infos sammeln
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         reward_title = message.tags.get('msg-id')
+        
         global m_count
-        m_count = m_count + 1 
-        print(f'[{timestamp}] [{m_count}] {message.author.name}: {message.content} | Reward Title: {reward_title}')
-        # Don't forget to process the commands, otherwise commands won't work
+        m_count = m_count + 1   
         
-        #---------------Ab hier kommt was vom Text ausgelöst wird--------------
-        
-        #TTS Audio generieren
-
         global m_author
         m_author = message.author.name
         
-        piper_generate(message.content)
-        
-        RVC_convert()
-        
-        global rvc_length
-        rvc_length = get_audio_length(last_rvc_file)
-        print(f'Audio Length: {rvc_length}')
-        
-        global show_user_label
-        show_user_label = True
-        
-        play_last_rvc(last_rvc_file)
-        
-        show_user_label = False
+        # Infos in die Queue
+        enqueue_message(timestamp,m_count,message.author.name,message.content,reward_title)
         
         await self.handle_commands(message)
 
-#------Programm--------------
+#------Programm Main Loop--------------
 def main():
     global root
     root = tk.Tk()
