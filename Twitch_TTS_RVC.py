@@ -12,6 +12,7 @@ import threading
 import queue
 import time
 
+from tkinter import ttk
 from twitchio.ext import commands
 from datetime import datetime
 from threading import Thread
@@ -24,9 +25,12 @@ show_model_label = False
 show_user_label = False
 show_img_label = False
 model_change_bool = False
+AutoPlay_bool = False
+running_bool = False
 m_count = 0
 message_queue = queue.Queue()
 queue_df = pd.DataFrame(columns=['Zeit', 'Count', 'Autor', 'Nachricht', 'Reward'])
+done_df = pd.DataFrame(columns=['Zeit', 'Count', 'Autor', 'Nachricht', 'Reward'])
 
 #--------Config-Datei laden--------------------
 def load_config(file_path):
@@ -96,7 +100,7 @@ def RVC_config(rvc_model):
     else:
         upd_model_label(rvc_model)
     
-    get_image(rvc_model)
+    #get_image(rvc_model)
     print(f"RVC Model '{rvc_model}' wurde geladen!")
 
 #-------RVC Konvertierung---------------
@@ -203,10 +207,6 @@ def init_TTS():
     bot_thread.daemon = True
     bot_thread.start()
     
-    queue_thread = threading.Thread(target=process_messages)
-    queue_thread.daemon = True
-    queue_thread.start()
-    
     test_prompt = "Das Programm rennt jetzt, Hänno."
     
     piper_generate(test_prompt)
@@ -248,13 +248,51 @@ def bot_run():
 # Funktion, um Nachrichten und Absender in die Queue zu schreiben
 def enqueue_message(m_time, m_count, m_author, message, m_reward):
     global message_queue
+    global queue_df
     message_queue.put((m_time, m_count, m_author, message, m_reward))
     add_queue_content(m_time, m_count, m_author, message, m_reward)
 
+# Die nächste TTS Nachricht in der Queue abspielen
+def process_next_message():
+    if not message_queue.empty():  # Überprüfe, ob die Queue leer ist
+        global running_bool
+        running_bool = True
+        m_time, m_count, m_author, message, m_reward = message_queue.get()  # Holt Nachricht und Absender aus der Queue
+        print(f'[{m_time}] [{m_count}] {m_author}: {message} | Reward Title: {m_reward}') # Gibt Infos in Konsole aus
+        
+        #PiperTTS durchführen
+        piper_generate(message)
+        #RVC Convert durchführen
+        RVC_convert()
+        
+        #RVC Audiolänge ermitteln und ausgeben
+        global rvc_length
+        rvc_length = get_audio_length(last_rvc_file)
+        print(f'Audio Length: {rvc_length}')
+        
+        #Auf der Nutzeroberfläche user_label zeigen
+        global show_user_label
+        show_user_label = True
+        
+        #RVC Audio ausgeben
+        play_last_rvc(last_rvc_file)
+        time.sleep(rvc_length)
+        # user_label ausblenden                        
+        show_user_label = False
+        
+        # fill Dataframes
+        add_done_content(m_time, m_count, m_author, message, m_reward)
+        del_queue_content(m_count)
+        
+        running_bool = False
+        global NextMsg_button
+        NextMsg_button.config(state="active")
+        message_queue.task_done()  # Markiert die Nachricht als erledigt    
+
 # Funktion um Daten aus der Queue zu holen    
 def process_messages():
-    while True:
-        if not message_queue.empty():  # Überprüfe, ob die Queue leer ist
+    while AutoPlay_bool:
+        if not message_queue.empty():  # Überprüfe, ob die Queue leer ist            
             m_time, m_count, m_author, message, m_reward = message_queue.get()  # Holt Nachricht und Absender aus der Queue
             print(f'[{m_time}] [{m_count}] {m_author}: {message} | Reward Title: {m_reward}') # Gibt Infos in Konsole aus
             
@@ -275,30 +313,16 @@ def process_messages():
             #RVC Audio ausgeben
             play_last_rvc(last_rvc_file)
             time.sleep(rvc_length)
-            # user_label ausblenden
+            # user_label ausblenden                        
             show_user_label = False
+            
+            # fill Dataframes
+            add_done_content(m_time, m_count, m_author, message, m_reward)
             del_queue_content(m_count)
             
             message_queue.task_done()  # Markiert die Nachricht als erledigt
         else:
             time.sleep(1)  # Kurze Pause, um die CPU nicht zu überlasten
-
-#------WIP------Nachrichten in der Queue anzeigen------------
-def show_queue_contents():
-    
-    queue_window = tk.Toplevel(root)
-    queue_window.title("Nachrichten in Queue")
-    
-    # Liste zur Anzeige der Nachrichten und Absender
-    global queue_listbox
-    queue_listbox = tk.Listbox(queue_window, width=150, height=10)
-    queue_listbox.pack(padx=10, pady=10)
-    
-    queue_display_thread = threading.Thread(target=update_queue_contents)
-    queue_display_thread.daemon = True
-    queue_display_thread.start()
-    
-    root.mainloop()
 
 def add_queue_content(m_time, m_count, m_author, message, m_reward):
     global queue_df
@@ -308,9 +332,14 @@ def del_queue_content(m_count):
     global queue_df
     queue_df = queue_df.drop(queue_df[queue_df['Count'] == m_count].index)
 
-# Listeninhalt laden
+def add_done_content(m_time, m_count, m_author, message, m_reward):
+    global done_df
+    done_df = pd.concat([done_df, pd.DataFrame({'Zeit': [m_time], 'Count': [m_count], 'Autor': [m_author], 'Nachricht': [message], 'Reward': [m_reward]})], ignore_index=True)
+
+# Queue Listeninhalt laden
 def update_queue_contents():
     global queue_listbox
+    global queue_df
     while True:
         # Lösche vorherige Einträge in der ListBox
         queue_listbox.delete(0, tk.END)    
@@ -322,42 +351,105 @@ def update_queue_contents():
                 queue_listbox.insert(tk.END, f'[{row["Zeit"]}] [{row["Count"]}] {row["Autor"]}: {row["Nachricht"]} | Reward Title: {row["Reward"]}')        
             time.sleep(1)  # Kurze Pause
         time.sleep(1)
+
+# Done Listeninhalt laden
+def update_done_contents():
+    global done_listbox
+    global done_df
+    while True:
+        # Lösche vorherige Einträge in der ListBox
+        done_listbox.delete(0, tk.END)    
+        # Fülle DataFrame mit den aktuellen Nachrichten aus der Queue
+        while not done_df.empty:
+            done_listbox.delete(0, tk.END)        
+        # Füge die Nachrichten aus dem DataFrame der ListBox hinzu
+            for index, row in done_df.iterrows():
+                done_listbox.insert(tk.END, f'[{row["Zeit"]}] [{row["Count"]}] {row["Autor"]}: {row["Nachricht"]} | Reward Title: {row["Reward"]}')        
+            time.sleep(1)  # Kurze Pause
+        time.sleep(1)    
     
 #---------Nutzeroberfläche--------------------------------------------
 def init_window(window):
 
     window.title("Twitch TTS RVC")
     window.geometry("600x300")  # Set initial window size to 400x200 pixels
-  
+    
+    tab_control = ttk.Notebook(window)
+    
+#----# Seite 1 erstellen
+    global page1
+    page1 = create_page(tab_control, "TTS/RVC Control")
+    
     # Auswahlfeld für RVC-Modelle
-    model_label = tk.Label(window, text="RVC Model auswählen:")
-    model_label.place(relx=0.15, rely=0.4, anchor="center")
+    model_label = tk.Label(page1, text="Choose RVC Model:")
+    model_label.place(relx=0.15, rely=0.1, anchor="center")
     
     # Liste der .pth-Dateien im Unterverzeichnis RVC/assets/weights abrufen
     rvc_models = [f for f in os.listdir(os.path.join("RVC", "assets", "weights")) if f.endswith(".pth")]
 
     # Variable für die Auswahl des RVC-Modells
-    selected_model = tk.StringVar(window)
+    selected_model = tk.StringVar(page1)
     selected_model.set(rvc_models[0])  # Standardmäßig das erste Modell auswählen
 
     # Dropdown-Menü für die Auswahl des RVC-Modells
-    model_dropdown = tk.OptionMenu(window, selected_model, *rvc_models)
-    model_dropdown.place(relx=0.4, rely=0.4, anchor="center")
-
+    model_dropdown = tk.OptionMenu(page1, selected_model, *rvc_models)
+    model_dropdown.place(relx=0.5, rely=0.1, anchor="center")
+    
     # Button "Model laden"
-    load_model_button = tk.Button(window, text="Model laden", command=lambda: load_model_action(selected_model.get()))
-    load_model_button.place(relx=0.6, rely=0.4, anchor="center")
- 
+    load_model_button = tk.Button(page1, text="Load Model", command=lambda: load_model_action(selected_model.get()))
+    load_model_button.place(relx=0.8, rely=0.1, anchor="center")
+    
     # Model-Chance Button
     global model_change_button
-    model_change_button = tk.Button(window, text="Model Rotation starten", command=lambda: model_change_action())
-    model_change_button.place(relx=0.8, rely=0.4, anchor="center")
- 
+    model_change_button = tk.Button(page1, text="Start Model rotation", command=lambda: model_change_action())
+    model_change_button.place(relx=0.15, rely=0.3, anchor="center")
+    
+    # AutoPlay Button
+    global AutoPlay_button
+    AutoPlay_button = tk.Button(page1, text="Start Auto-Play", command=lambda: AutoPlay_action())
+    AutoPlay_button.place(relx=0.5, rely=0.3, anchor="center")
+    
+    # Next Message Button
+    global NextMsg_button
+    NextMsg_button = tk.Button(page1, text="Next TTS", command=lambda: NextMsg_action())
+    NextMsg_button.place(relx=0.8, rely=0.3, anchor="center")
+    
     # Start-Button
     global start_button
-    start_button = tk.Button(window, text="Twitch Bot starten", command=lambda: start_action(window))
-    start_button.place(relx=0.5, rely=0.8, anchor="center")    
+    start_button = tk.Button(page1, text="Start Twitch Bot", command=lambda: start_action(page1))
+    start_button.place(relx=0.5, rely=0.8, anchor="center") 
+    
+#----# Seite 2 erstellen
+    page2 = create_page(tab_control, "TTS Queue")
+    # Liste zur Anzeige der Nachrichten und Absender
+    global queue_listbox
+    queue_listbox = tk.Listbox(page2, width=150, height=10)
+    queue_listbox.pack(padx=10, pady=20)
+    
+    queue_display_thread = threading.Thread(target=update_queue_contents)
+    queue_display_thread.daemon = True
+    queue_display_thread.start()
 
+
+#----# Seite 3 erstellen
+    page3 = create_page(tab_control, "TTS Done")
+    # Liste zur Anzeige der Nachrichten und Absender
+    global done_listbox
+    done_listbox = tk.Listbox(page3, width=150, height=10)
+    done_listbox.pack(padx=10, pady=20)
+    
+    done_display_thread = threading.Thread(target=update_done_contents)
+    done_display_thread.daemon = True
+    done_display_thread.start()  
+    
+    # Tab-Steuerung platzieren
+    tab_control.pack(expand=1, fill="both")
+
+
+def create_page(tab_control, title):
+    page = ttk.Frame(tab_control)
+    tab_control.add(page, text=title)
+    return page
 
 def load_model_action(selected_model):
     RVC_config(selected_model)
@@ -367,19 +459,19 @@ def model_change_action():
     global model_change_button
     if not model_change_bool:
         model_change_bool = True
-        print('Model Rotation gestartet!')
-        model_change_button.config(text="Model Rotation stoppen")
+        print('Model Rotation started!')
+        model_change_button.config(text="Stop Model Rotation")
         model_thread = threading.Thread(target=model_change)
         model_thread.start()
     else:
         model_change_bool = False
-        print('Model Rotation gestoppt!')
-        model_change_button.config(text="Model Rotation starten")
+        print('Model Rotation stopped!')
+        model_change_button.config(text="Start Model Rotation")
 
 def init_model_label(model_name):
-    global root
+    global page1
     global model_label
-    model_label = tk.Label(root, text= f"RVC Model: {model_name}", font=("Arial", 18), fg="red")
+    model_label = tk.Label(page1, text= f"RVC Model: {model_name}", font=("Arial", 18), fg="red")
     model_label.place(relx=0.5, rely=0.55, anchor="center")  # Place text label in the center of the window
 
 def upd_model_label(model_name):
@@ -388,7 +480,7 @@ def upd_model_label(model_name):
 
 def bot_live(window):
     global text_label
-    text_label = tk.Label(window, text="Programm läuft. Zum Beenden Shell schließen. ", font=("Arial", 10), fg="red")
+    text_label = tk.Label(window, text="Connection to Chat enabled! Close Shell to stop! ", font=("Arial", 10), fg="red")
     text_label.place(relx=0.5, rely=0.7, anchor="center")  # Place text label in the center of the window
     global start_button
     start_button.destroy()    
@@ -396,11 +488,6 @@ def bot_live(window):
 def start_action(window):
     start_button.config(state="disabled", text="Warte auf Twitch...")  # Disable start button once clicked
     init_TTS()
-    
-    #Queue-Button init
-    global queue_button
-    queue_button = tk.Button(window, text="Queue anzeigen", command=lambda: show_queue_contents())
-    queue_button.place(relx=0.5, rely=0.9, anchor="center")
 
 def init_user_label():
     global root
@@ -415,6 +502,33 @@ def init_user_label():
             user_label.place(relx=0.5, rely=0.85, anchor="center")  # Place text label in the center of the window
             time.sleep(rvc_length+1)
             user_label.destroy()
+
+def NextMsg_action():
+    global NextMsg_button  
+    
+    next_thread = threading.Thread(target=process_next_message)
+    next_thread.start()    
+   
+    if running_bool:
+        NextMsg_button.config(state="disabled")
+    else:
+        NextMsg_button.config(state="active")   
+    
+def AutoPlay_action():
+    global AutoPlay_bool, AutoPlay_button, NextMsg_button
+    if not AutoPlay_bool:
+        AutoPlay_bool = True
+        AutoPlay_button.config(text="Stop Auto-Play")
+        NextMsg_button.config(state="disabled")
+        
+        queue_thread = threading.Thread(target=process_messages)
+        queue_thread.daemon = True
+        queue_thread.start()
+        
+    else:
+        AutoPlay_bool = False
+        AutoPlay_button.config(text="Start Auto-Play")
+        NextMsg_button.config(state="active")
 
 def get_image(rvc_model):
     global root
@@ -478,8 +592,8 @@ class Bot(commands.Bot):
         # We are logged in and ready to chat and use commands...
         print(f'Logged in as | {self.nick}')
         #print(f'User id is | {self.user_id}')
-        global root
-        bot_live(root)
+        global page1
+        bot_live(page1)
         play_last_rvc(last_rvc_file)
         user_label_thread = threading.Thread(target=init_user_label)
         user_label_thread.start()
